@@ -20,45 +20,66 @@ type Service struct {
 }
 
 type Metrics struct {
-	ExpensiveReqs      *prometheus.CounterVec
-	ExpensiveDurations *prometheus.SummaryVec
+	ReqInflight prometheus.Gauge
+	ReqCounter  *prometheus.CounterVec
+	ReqDuration *prometheus.HistogramVec
+	ReqSize     *prometheus.HistogramVec
+	RespSize    *prometheus.HistogramVec
 }
 
-func (s *Service) metricsRegister() {
-	s.Metrics.ExpensiveReqs = prometheus.NewCounterVec(
+func metricsRegister(m *Metrics) {
+	m.ReqInflight = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "http_server_requests_inflight",
+			Help: "A gauge of requests currently being served",
+		},
+	)
+	prometheus.MustRegister(m.ReqInflight)
+
+	m.ReqCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "expensive_requests_total",
-			Help: "How many Expensive (long running) requests processed, partitioned by status",
+			Name: "http_server_requests_total",
+			Help: "http requests counter",
 		},
-		[]string{"status"},
+		[]string{"code", "method", "handler"},
 	)
-	prometheus.MustRegister(s.Metrics.ExpensiveReqs)
+	prometheus.MustRegister(m.ReqCounter)
 
-	s.Metrics.ExpensiveDurations = prometheus.NewSummaryVec(
-		prometheus.SummaryOpts{
-			Name:       "expensive_durations",
-			Help:       "Expensive  requests latencies in seconds",
-			Objectives: map[float64]float64{0.5: 0.05, 0.9: 0.01, 0.99: 0.001},
+	m.ReqDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "http_server_requests_durations",
+			Help:    "requests latencies in seconds",
+			Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10},
 		},
-		[]string{"status"},
+		[]string{"code", "method", "handler"},
 	)
-	prometheus.MustRegister(s.Metrics.ExpensiveDurations)
+	prometheus.MustRegister(m.ReqDuration)
+
+	m.ReqSize = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "http_server_request_sizes",
+			Help:    "request size in bytes",
+			Buckets: []float64{128, 1024, 512 * 1024, 1024 * 1024, 512 * 1024 * 1024},
+		},
+		[]string{"code", "method", "handler"},
+	)
+	prometheus.MustRegister(m.ReqSize)
+
+	m.RespSize = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "http_server_response_sizes",
+			Help:    "respone size in bytes",
+			Buckets: []float64{128, 1024, 512 * 1024, 1024 * 1024, 512 * 1024 * 1024},
+		},
+		[]string{"code", "method", "handler"},
+	)
 }
 
-func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-
-	log.Printf("%v.ServeHttp called", s)
+func expensive(w http.ResponseWriter, r *http.Request) {
 
 	fail := rand.Intn(100)%10 == 0
 	d := 5 + rand.Float64()*5 - 5
 	status := http.StatusOK
-	timer := prometheus.NewTimer(
-		prometheus.ObserverFunc(func(v float64) {
-			s.Metrics.ExpensiveDurations.WithLabelValues(
-				fmt.Sprintf("%d", status)).Observe(v)
-		}))
-	log.Printf("timer = %+v\n", timer)
-	defer timer.ObserveDuration()
 
 	if fail {
 		d = d / 1000
@@ -66,13 +87,25 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("fail = %v, Sleeping for %f seconds", fail, d)
 	time.Sleep(time.Duration(d) * time.Second)
-
-	log.Printf("incrementing s.Metrics.ExpensiveDurations = %v", s.Metrics.ExpensiveDurations)
-	s.Metrics.ExpensiveReqs.WithLabelValues("success").Inc()
 	w.WriteHeader(status)
 	fmt.Fprintf(w, "%f Seconds", d)
-	log.Printf("url=\"%s\"\n  remote=\"%s\" duration = %f, status=%d\n",
+	log.Printf("expensive: url=\"%s\"\n  remote=\"%s\" duration = %f, status=%d\n",
 		r.URL, r.RemoteAddr, d, status)
+}
+
+func cheap(w http.ResponseWriter, r *http.Request) {
+
+	fail := rand.Intn(100)%10 == 0
+	status := http.StatusOK
+
+	if fail {
+		status = http.StatusInternalServerError
+	}
+	log.Printf("cheap: fail = %v", fail)
+	w.WriteHeader(status)
+	fmt.Fprintf(w, "Cheap")
+	log.Printf("cheap: url=\"%s\"\n  remote=\"%s\"  status=%d\n",
+		r.URL, r.RemoteAddr, status)
 }
 
 func notFoundHandler(w http.ResponseWriter, r *http.Request) {
@@ -116,9 +149,56 @@ func main() {
 	}
 
 	l := fmt.Sprintf(":%d", *port)
-	s := &Service{Name: "Test1"}
-	s.metricsRegister()
-	http.Handle("/expensive", s)
+	m := &Metrics{}
+	metricsRegister(m)
+
+	expensiveHandler := http.HandlerFunc(expensive)
+	cheapHandler := http.HandlerFunc(cheap)
+
+	expensiveChain := promhttp.InstrumentHandlerInFlight(m.ReqInflight,
+		promhttp.InstrumentHandlerDuration(
+			m.ReqDuration.MustCurryWith(
+				prometheus.Labels{"handler": "expensive"}),
+			promhttp.InstrumentHandlerCounter(
+				m.ReqCounter.MustCurryWith(
+					prometheus.Labels{"handler": "expensive"}),
+
+				promhttp.InstrumentHandlerRequestSize(
+					m.ReqSize.MustCurryWith(
+						prometheus.Labels{"handler": "expensive"}),
+
+					promhttp.InstrumentHandlerResponseSize(
+						m.RespSize.MustCurryWith(
+							prometheus.Labels{"handler": "expensive"}),
+						expensiveHandler),
+				),
+			),
+		),
+	)
+
+	cheapChain := promhttp.InstrumentHandlerInFlight(m.ReqInflight,
+		promhttp.InstrumentHandlerDuration(
+			m.ReqDuration.MustCurryWith(
+				prometheus.Labels{"handler": "cheap"}),
+			promhttp.InstrumentHandlerCounter(
+				m.ReqCounter.MustCurryWith(
+					prometheus.Labels{"handler": "cheap"}),
+
+				promhttp.InstrumentHandlerRequestSize(
+					m.ReqSize.MustCurryWith(
+						prometheus.Labels{"handler": "cheap"}),
+
+					promhttp.InstrumentHandlerResponseSize(
+						m.RespSize.MustCurryWith(
+							prometheus.Labels{"handler": "cheap"}),
+						cheapHandler),
+				),
+			),
+		),
+	)
+
+	http.Handle("/expensive", expensiveChain)
+	http.Handle("/cheap", cheapChain)
 
 	fmt.Println("Hello.")
 	log.Fatal(http.ListenAndServe(l, nil))
