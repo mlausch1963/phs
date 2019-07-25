@@ -33,7 +33,6 @@ compile:
   stage: build
   script:
     - make build 
-    
-artifacts:
+  artifacts:
     paths:
       - phs
