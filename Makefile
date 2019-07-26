@@ -17,7 +17,7 @@ help:
 	@echo 'Usage:'
 	@echo '    make build           Compile the project.'
 	@echo '    make get-deps        runs dep ensure, mostly used for ci.'
-	
+
 	@echo '    make clean           Clean the directory tree.'
 	@echo
 
@@ -33,5 +33,4 @@ clean:
 	@test ! -e bin/${BIN_NAME} || rm bin/${BIN_NAME}
 
 test:
-	go test ./...
-
+	go test -v ./...

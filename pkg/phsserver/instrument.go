@@ -1,9 +1,34 @@
 package phsserver
 
 import (
+	"fmt"
+	"strconv"
+	"strings"
+
 	"github.com/prometheus/client_golang/prometheus"
 	//	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+type BucketConfig struct {
+	Buckets []float64
+}
+
+func NewBucketConfig(config string) (*BucketConfig, error) {
+	sizes := strings.Split(config, ":")
+	fmt.Printf("sizes: len = %d, content = %+v\n", len(sizes), sizes)
+	c := new(BucketConfig)
+	buckets := make([]float64, 0)
+	for _, b := range sizes {
+		f, err := strconv.ParseFloat(b, 64)
+		if err != nil {
+			return nil, fmt.Errorf("Cannot parse %q into float.", b)
+		}
+		buckets = append(buckets, f)
+	}
+	c.Buckets = buckets
+	fmt.Printf("real sizes: len = %d, content = %+v\n", len(c.Buckets), sizes)
+	return c, nil
+}
 
 type Metrics struct {
 	ReqInflight prometheus.Gauge
