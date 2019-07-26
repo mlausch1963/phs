@@ -1,5 +1,5 @@
 # This file is a template, and might need editing before it works on your project.
-image: golang:1.12.7-alpine3.10
+image: mygolang:latest
 
 variables:
   # Please edit to your GitLab project
@@ -24,8 +24,7 @@ stages:
 format:
   stage: test
   script:
-    - GO111MODULE=on go fmt $(go list ./... | grep -v /vendor/)
-    - GO111MODULE=on go test -race $(go list ./... | grep -v /vendor/)
+    - make test
 
 compile:
   stage: build
