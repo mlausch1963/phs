@@ -1,10 +1,11 @@
-package tests
+package _test
 
 import (
 	"fmt"
+	"testing"
+
 	"git.bofh.at/mla/phs/pkg/phsserver"
 	"github.com/stretchr/testify/assert"
-	"testing"
 )
 
 func cmpBc(b1 []float64, b2 []float64) (bool, error) {
@@ -40,27 +41,51 @@ func TestBucketParser(t *testing.T) {
 		},
 		{
 			"multiple integers",
-			"1:2:3:4:4",
+			"1:2:3:4",
 			er{
 				nil,
-				[]float64{1.0, 2.0, 3.0, 4.0, 4.0},
+				[]float64{1.0, 2.0, 3.0, 4.0},
 			},
 		},
 		{
 			"multiple integers, trailing colon",
-			"1:2:3:4:4:",
+			"1:2:3:4:",
+			er{
+				fmt.Errorf("Cannot parse \"\" into float."),
+				[]float64{1.0, 2.0, 3.0, 4.0},
+			},
+		},
+		{
+			"multiple integers, embedded double colon",
+			"1:2::3:4",
+			er{
+				fmt.Errorf("Cannot parse \"\" into float."),
+				nil,
+			},
+		},
+		{
+			"multiple integers, leading colon",
+			":1:2:3:4",
+			er{
+				fmt.Errorf("Cannot parse \"\" into float."),
+				nil,
+			},
+		},
+		{
+			"multiple integers, out of order",
+			"1:2:4:3",
 			er{
 				nil,
-				[]float64{1.0, 2.0, 3.0, 4.0, 4.0},
+				[]float64{1.0, 2.0, 3.0, 4.0},
 			},
 		},
 	}
 	for _, tst := range tdata {
 		bc, err := phsserver.NewBucketConfig(tst.input)
-		assert.Equal(t, tst.r.e, err, "NewBucketConfig returns Error ")
+		assert.Equal(t, tst.r.e, err, fmt.Sprintf("%s: NewBucketConfig returns Error ", tst.name))
 		if err != nil {
 			continue
 		}
-		assert.Equal(t, tst.r.r, bc.Buckets, fmt.Sprintf("%s: equal", tst.name))
+		assert.Equal(t, tst.r.r, bc.Buckets, fmt.Sprintf("%s: buckets equal", tst.name))
 	}
 }
