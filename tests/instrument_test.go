@@ -2,10 +2,15 @@ package _test
 
 import (
 	"fmt"
-	"testing"
-
 	"git.bofh.at/mla/phs/pkg/phsserver"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
+	"io"
+	"log"
+	"net/http"
+	"net/http/httptest"
+	"testing"
 )
 
 func cmpBc(b1 []float64, b2 []float64) (bool, error) {
@@ -96,4 +101,66 @@ func TestBucketParser(t *testing.T) {
 		}
 		assert.Equal(t, tst.r.r, bc.Buckets, fmt.Sprintf("%s: buckets equal", tst.name))
 	}
+}
+
+func _p1Handler(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	io.WriteString(w, "OK")
+}
+
+func TestMetrics(t *testing.T) {
+	/*	tdats := []struct {
+			name    string
+			handler HandlerFunc
+		}{
+			{
+				name:    "dummy",
+				handler: nil,
+			},
+		}
+	*/
+	req, err := http.NewRequest("GET", "/p1", nil)
+	assert.Equal(t, err, nil)
+	rr := httptest.NewRecorder()
+
+	rqDur, err := phsserver.NewBucketConfig("0.001:0.010:0.1:0.5:1:2:5:10")
+	assert.Equal(t, err, nil)
+	m := &phsserver.Metrics{
+		ReqDurationBuckets: rqDur,
+	}
+	phsserver.MetricsRegister(m)
+
+	handler := phsserver.Wrap(http.HandlerFunc(_p1Handler), "p1", m)
+
+	log.Printf("wrapped handler: %+v", handler)
+
+	xx := &io_prometheus_client.Metric{}
+
+	l := prometheus.Labels{
+		"handler": "p1",
+		"method":  "GET",
+		"code":    "200",
+	}
+
+	d := prometheus.DefaultRegisterer.(*prometheus.Registry)
+	xy, err := d.Gather()
+	assert.Equal(t, err, nil, "gather metrics")
+
+	log.Printf("xy = %+v", xy)
+
+	c, err := m.ReqCounter.GetMetricWith(l)
+	assert.Equal(t, err, nil, "No metric found")
+	fmt.Printf("counter = %+v\n", c)
+	c.Write(xx)
+	assert.Equal(t, 0.0, *xx.Counter.Value, "counter value")
+
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, rr.Code, http.StatusOK, "pure handler Status")
+
+	c, err = m.ReqCounter.GetMetricWith(l)
+	assert.Equal(t, err, nil, "No metric found")
+	fmt.Printf("counter = %+v\n", c)
+	c.Write(xx)
+	assert.Equal(t, 1.0, *xx.Counter.Value, "counter value")
 }
