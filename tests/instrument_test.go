@@ -75,8 +75,16 @@ func TestBucketParser(t *testing.T) {
 			"multiple integers, out of order",
 			"1:2:4:3",
 			er{
-				nil,
+				fmt.Errorf("Buckets out of order, idx(3) < idx-1"),
 				[]float64{1.0, 2.0, 3.0, 4.0},
+			},
+		},
+		{
+			"multiple floats",
+			"1.2:1024.2:4.12345e4",
+			er{
+				nil,
+				[]float64{1.2, 1024.2, 41234.5},
 			},
 		},
 	}

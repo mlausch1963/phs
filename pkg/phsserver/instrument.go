@@ -15,18 +15,23 @@ type BucketConfig struct {
 
 func NewBucketConfig(config string) (*BucketConfig, error) {
 	sizes := strings.Split(config, ":")
-	fmt.Printf("sizes: len = %d, content = %+v\n", len(sizes), sizes)
-	c := new(BucketConfig)
 	buckets := make([]float64, 0)
-	for _, b := range sizes {
+	for idx, b := range sizes {
 		f, err := strconv.ParseFloat(b, 64)
 		if err != nil {
 			return nil, fmt.Errorf("Cannot parse %q into float.", b)
 		}
 		buckets = append(buckets, f)
+
+		if idx >= 1 && buckets[idx-1] > buckets[idx] {
+			return nil, fmt.Errorf("Buckets out of order, idx(%d) < idx-1",
+				idx)
+		}
+
 	}
-	c.Buckets = buckets
-	fmt.Printf("real sizes: len = %d, content = %+v\n", len(c.Buckets), sizes)
+	c := &BucketConfig{
+		Buckets: buckets,
+	}
 	return c, nil
 }
 
