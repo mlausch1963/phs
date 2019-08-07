@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"git.bofh.at/mla/phs/pkg/phsserver"
 	"git.bofh.at/mla/phs/version"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -16,63 +17,7 @@ import (
 
 type Service struct {
 	Name    string
-	Metrics Metrics
-}
-
-type Metrics struct {
-	ReqInflight prometheus.Gauge
-	ReqCounter  *prometheus.CounterVec
-	ReqDuration *prometheus.HistogramVec
-	ReqSize     *prometheus.HistogramVec
-	RespSize    *prometheus.HistogramVec
-}
-
-func metricsRegister(m *Metrics) {
-	m.ReqInflight = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "http_server_requests_inflight",
-			Help: "A gauge of requests currently being served",
-		},
-	)
-	prometheus.MustRegister(m.ReqInflight)
-
-	m.ReqCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "http_server_requests_total",
-			Help: "http requests counter",
-		},
-		[]string{"code", "method", "handler"},
-	)
-	prometheus.MustRegister(m.ReqCounter)
-
-	m.ReqDuration = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "http_server_requests_durations",
-			Help:    "requests latencies in seconds",
-			Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10},
-		},
-		[]string{"code", "method", "handler"},
-	)
-	prometheus.MustRegister(m.ReqDuration)
-
-	m.ReqSize = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "http_server_request_sizes",
-			Help:    "request size in bytes",
-			Buckets: []float64{128, 1024, 512 * 1024, 1024 * 1024, 512 * 1024 * 1024},
-		},
-		[]string{"code", "method", "handler"},
-	)
-	prometheus.MustRegister(m.ReqSize)
-
-	m.RespSize = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "http_server_response_sizes",
-			Help:    "respone size in bytes",
-			Buckets: []float64{128, 1024, 512 * 1024, 1024 * 1024, 512 * 1024 * 1024},
-		},
-		[]string{"code", "method", "handler"},
-	)
+	Metrics phsserver.Metrics
 }
 
 func expensive(w http.ResponseWriter, r *http.Request) {
@@ -149,32 +94,40 @@ func main() {
 	}
 
 	l := fmt.Sprintf(":%d", *port)
-	m := &Metrics{}
-	metricsRegister(m)
+	m := &phsserver.Metrics{}
+	var _x *phsserver.BucketConfig
+	_x, _ = phsserver.NewBucketConfig("1:2:3:4")
+	m.ReqDurationBuckets = _x
+	m.ReqSizeBuckets = _x
+	m.RespSizeBuckets = _x
+	phsserver.MetricsRegister(m)
 
 	expensiveHandler := http.HandlerFunc(expensive)
 	cheapHandler := http.HandlerFunc(cheap)
 
-	expensiveChain := promhttp.InstrumentHandlerInFlight(m.ReqInflight,
-		promhttp.InstrumentHandlerDuration(
-			m.ReqDuration.MustCurryWith(
-				prometheus.Labels{"handler": "expensive"}),
-			promhttp.InstrumentHandlerCounter(
-				m.ReqCounter.MustCurryWith(
+	expensiveChain := phsserver.Wrap(expensiveHandler, "EXPANSIVE", m)
+	/*
+		expensiveChain := promhttp.InstrumentHandlerInFlight(m.ReqInflight,
+			promhttp.InstrumentHandlerDuration(
+				m.ReqDuration.MustCurryWith(
 					prometheus.Labels{"handler": "expensive"}),
-
-				promhttp.InstrumentHandlerRequestSize(
-					m.ReqSize.MustCurryWith(
+				promhttp.InstrumentHandlerCounter(
+					m.ReqCounter.MustCurryWith(
 						prometheus.Labels{"handler": "expensive"}),
 
-					promhttp.InstrumentHandlerResponseSize(
-						m.RespSize.MustCurryWith(
+					promhttp.InstrumentHandlerRequestSize(
+						m.ReqSize.MustCurryWith(
 							prometheus.Labels{"handler": "expensive"}),
-						expensiveHandler),
+
+						promhttp.InstrumentHandlerResponseSize(
+							m.RespSize.MustCurryWith(
+								prometheus.Labels{"handler": "expensive"}),
+							expensiveHandler),
+					),
 				),
 			),
-		),
-	)
+		)
+	*/
 
 	cheapChain := promhttp.InstrumentHandlerInFlight(m.ReqInflight,
 		promhttp.InstrumentHandlerDuration(
