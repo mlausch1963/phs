@@ -97,7 +97,7 @@ func main() {
 	m := &phsserver.Metrics{}
 	var _x *phsserver.BucketConfig
 	_x, _ = phsserver.NewBucketConfig("1:2:3:4")
-	m.ReqDurationBuckets = _x
+	m.ReqDurationHBuckets = _x
 	m.ReqSizeBuckets = _x
 	m.RespSizeBuckets = _x
 	phsserver.MetricsRegister(m)
@@ -131,7 +131,7 @@ func main() {
 
 	cheapChain := promhttp.InstrumentHandlerInFlight(m.ReqInflight,
 		promhttp.InstrumentHandlerDuration(
-			m.ReqDuration.MustCurryWith(
+			m.ReqDurationHisto.MustCurryWith(
 				prometheus.Labels{"handler": "cheap"}),
 			promhttp.InstrumentHandlerCounter(
 				m.ReqCounter.MustCurryWith(
