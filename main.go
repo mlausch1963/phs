@@ -95,31 +95,17 @@ func main() {
 
 	l := fmt.Sprintf(":%d", *port)
 	m := &phsserver.Metrics{}
+	var _x *phsserver.BucketConfig
+	_x, _ = phsserver.NewBucketConfig("1:2:3:4")
+	m.ReqDurationBuckets = _x
+	m.ReqSizeBuckets = _x
+	m.RespSizeBuckets = _x
 	phsserver.MetricsRegister(m)
 
 	expensiveHandler := http.HandlerFunc(expensive)
 	cheapHandler := http.HandlerFunc(cheap)
 
-	expensiveChain := promhttp.InstrumentHandlerInFlight(m.ReqInflight,
-		promhttp.InstrumentHandlerDuration(
-			m.ReqDuration.MustCurryWith(
-				prometheus.Labels{"handler": "expensive"}),
-			promhttp.InstrumentHandlerCounter(
-				m.ReqCounter.MustCurryWith(
-					prometheus.Labels{"handler": "expensive"}),
-
-				promhttp.InstrumentHandlerRequestSize(
-					m.ReqSize.MustCurryWith(
-						prometheus.Labels{"handler": "expensive"}),
-
-					promhttp.InstrumentHandlerResponseSize(
-						m.RespSize.MustCurryWith(
-							prometheus.Labels{"handler": "expensive"}),
-						expensiveHandler),
-				),
-			),
-		),
-	)
+	expensiveChain := phsserver.Wrap(expensiveHandler, "EXPANSIVE", m)
 
 	cheapChain := promhttp.InstrumentHandlerInFlight(m.ReqInflight,
 		promhttp.InstrumentHandlerDuration(
