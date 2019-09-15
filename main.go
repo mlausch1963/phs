@@ -11,7 +11,6 @@ import (
 
 	"git.bofh.at/mla/phs/pkg/phsserver"
 	"git.bofh.at/mla/phs/version"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -96,37 +95,24 @@ func main() {
 	l := fmt.Sprintf(":%d", *port)
 	m := &phsserver.Metrics{}
 	var _x *phsserver.BucketConfig
-	_x, _ = phsserver.NewBucketConfig("1:2:3:4")
-	m.ReqDurationBuckets = _x
+	_x, err := phsserver.NewBucketConfig("1;2;4;8;16;32;64;128;256;1024")
+	if err != nil {
+		panic(err)
+	}
+	m.ReqDurationHBuckets = _x
 	m.ReqSizeBuckets = _x
 	m.RespSizeBuckets = _x
+
+	_y, err := phsserver.NewPercentileConfig("50;90;99")
+	m.ReqDurationPBuckets = _y
+
 	phsserver.MetricsRegister(m)
 
 	expensiveHandler := http.HandlerFunc(expensive)
 	cheapHandler := http.HandlerFunc(cheap)
 
-	expensiveChain := phsserver.Wrap(expensiveHandler, "EXPANSIVE", m)
-
-	cheapChain := promhttp.InstrumentHandlerInFlight(m.ReqInflight,
-		promhttp.InstrumentHandlerDuration(
-			m.ReqDuration.MustCurryWith(
-				prometheus.Labels{"handler": "cheap"}),
-			promhttp.InstrumentHandlerCounter(
-				m.ReqCounter.MustCurryWith(
-					prometheus.Labels{"handler": "cheap"}),
-
-				promhttp.InstrumentHandlerRequestSize(
-					m.ReqSize.MustCurryWith(
-						prometheus.Labels{"handler": "cheap"}),
-
-					promhttp.InstrumentHandlerResponseSize(
-						m.RespSize.MustCurryWith(
-							prometheus.Labels{"handler": "cheap"}),
-						cheapHandler),
-				),
-			),
-		),
-	)
+	expensiveChain := phsserver.Wrap(expensiveHandler, "XXX:EXPENSIVE", m)
+	cheapChain := phsserver.Wrap(cheapHandler, "XXX:CHEAP", m)
 
 	http.Handle("/expensive", expensiveChain)
 	http.Handle("/cheap", cheapChain)
