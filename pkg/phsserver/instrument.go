@@ -13,14 +13,12 @@ import (
 //The values must be strict
 //monotonic growing. Use NewBuckconfig to create a configuration from a
 // semicolon separated string.
-type BucketConfig struct {
-	Buckets []float64
-}
+type BucketConfig []float64;
+
 
 // PercentileConfig stores percentiles to be reported.
-type PercentileConfig struct {
-	Percentiles map[float64]float64
-}
+type PercentileConfig  map[float64]float64
+
 
 //type HandlerFunc func(http.ResponseWriter, *http.Request)
 
@@ -32,7 +30,7 @@ type PercentileConfig struct {
 // monotonic growing.
 func NewBucketConfig(config string) (*BucketConfig, error) {
 	sizes := strings.Split(config, ";")
-	buckets := make([]float64, 0)
+	buckets := make(BucketConfig, 0)
 	for idx, b := range sizes {
 		f, err := strconv.ParseFloat(b, 64)
 		if err != nil {
@@ -46,10 +44,7 @@ func NewBucketConfig(config string) (*BucketConfig, error) {
 		}
 
 	}
-	c := &BucketConfig{
-		Buckets: buckets,
-	}
-	return c, nil
+	return &buckets, nil
 }
 
 // NewBuckConfig returns a new bucketconfiguration from a string representation
@@ -59,7 +54,8 @@ func NewBucketConfig(config string) (*BucketConfig, error) {
 // border. The value of the entroes, when parsed as floats, must e strict
 // monotonic growing.
 func NewPercentileConfig(config string) (*PercentileConfig, error) {
-	percentiles := make(map[float64]float64)
+
+	percentiles := make(PercentileConfig)
 	sizes := strings.Split(config, ";")
 
 	var e float64
@@ -96,10 +92,7 @@ func NewPercentileConfig(config string) (*PercentileConfig, error) {
 
 		}
 	}
-	c := &PercentileConfig{
-		Percentiles: percentiles,
-	}
-	return c, nil
+	return &percentiles, nil
 }
 
 // Metics holds the prometheus metrics for server side metrics.
@@ -108,16 +101,38 @@ type Metrics struct {
 	ReqCounter         *prometheus.CounterVec
 
 	ReqDurationHisto       *prometheus.HistogramVec
-	ReqDurationHBuckets *BucketConfig
+	ReqDurationHistConf BucketConfig
 
 	ReqDurationPercentiles *prometheus.SummaryVec
-	ReqDurationPBuckets *PercentileConfig
+	ReqDurationPercentileConf PercentileConfig
 
 	ReqSize            *prometheus.HistogramVec
-	ReqSizeBuckets     *BucketConfig
+	ReqSizeBuckets     BucketConfig
 
 	RespSize           *prometheus.HistogramVec
-	RespSizeBuckets    *BucketConfig
+	RespSizeBuckets    BucketConfig
+}
+
+func NewDefaultMetrics() *Metrics {
+	m := &Metrics{
+		ReqDurationHistConf: []float64{1e-3, 2e-3, 4e-3, 8e-3, 16e-3,
+			32e-3, 64e-3, 128e-3, 256e-3, 512e-3, 1024e-3},
+		ReqDurationPercentileConf: map[float64]float64{0.5: 0.05, 0.9:0.01, 0.99:0.001},
+		ReqSizeBuckets: []float64{256, 512, 1024, 2048, 4096, 1024*1024, 10*1024*1024},
+		RespSizeBuckets: []float64{256, 512, 1024, 2048, 4096, 1024*1024, 10*1024*1024},
+	}
+	return m
+}
+
+
+func NewSlowBuckets() BucketConfig {
+	return []float64{1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5}
+}
+
+
+func NewLargeSizes() BucketConfig {
+	return []float64{1024, 10 * 1024, 100* 1024, 1024 * 1024,
+		5 * 1024 * 1024, 10 * 1024 * 1024}
 }
 
 
@@ -127,7 +142,9 @@ type Metrics struct {
 func MetricsRegister(m *Metrics) {
 	m.ReqInflight = prometheus.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "http_server_requests_inflight",
+			Namespace: "http",
+			Subsystem: "server",
+			Name: "requests_inflight",
 			Help: "A gauge of requests currently being served",
 		},
 	)
@@ -135,7 +152,9 @@ func MetricsRegister(m *Metrics) {
 
 	m.ReqCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "http_server_requests_total",
+			Namespace: "http",
+			Subsystem: "server",
+			Name: "requests_total",
 			Help: "http server side requests counter",
 		},
 		[]string{"code", "method", "handler"},
@@ -143,68 +162,78 @@ func MetricsRegister(m *Metrics) {
 
 	prometheus.MustRegister(m.ReqCounter)
 
-	if m.ReqDurationHBuckets != nil {
+	if len(m.ReqDurationHistConf) > 0  {
 		m.ReqDurationHisto = prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Name:    "http_server_requests_durations",
+				Namespace: "http",
+				Subsystem: "server",
+				Name:    "request_duration",
 				Help:    "server side requests latencies in seconds",
-				Buckets: m.ReqDurationHBuckets.Buckets,
+				Buckets: m.ReqDurationHistConf,
 			},
 			[]string{"code", "method", "handler"},
 		)
 		prometheus.MustRegister(m.ReqDurationHisto)
 	}
 
-	if m.ReqDurationPBuckets != nil {
+	if len(m.ReqDurationPercentileConf) > 0 {
 		m.ReqDurationPercentiles = prometheus.NewSummaryVec(
 			prometheus.SummaryOpts{
 				Namespace: "http",
 				Subsystem: "server",
-				Name:    "requests_duration_percentiles",
+				Name:    "request_duration_percentile",
 				Help:    "server side requests latencies percentiles",
-				Objectives: m.ReqDurationPBuckets.Percentiles,
+				Objectives: m.ReqDurationPercentileConf,
 			},
 			[]string{"code", "method", "handler"},
 		)
 		prometheus.MustRegister(m.ReqDurationPercentiles)
 	}
 
-	if m.ReqSizeBuckets != nil {
+	if len(m.ReqSizeBuckets) > 0 {
 		m.ReqSize = prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Namespace: "http",
 				Subsystem: "server",
-				Name:    "request_sizes",
+				Name:    "request_size",
 				Help:    "server side request size in bytes",
-				Buckets: m.ReqSizeBuckets.Buckets,
+				Buckets: m.ReqSizeBuckets,
 			},
 			[]string{"code", "method", "handler"},
 		)
 		prometheus.MustRegister(m.ReqSize)
 	}
-	if m.RespSizeBuckets != nil {
+	if len(m.RespSizeBuckets) > 0 {
 		m.RespSize = prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Namespace: "http",
 				Subsystem: "server",
-				Name:    "response_sizes",
+				Name:    "response_size",
 				Help:    "server side respone size in bytes",
-				Buckets: m.RespSizeBuckets.Buckets,
+				Buckets: m.RespSizeBuckets,
 			},
 			[]string{"code", "method", "handler"},
 		)
 	}
 }
 
-// Wrap encapculates a http.Handler which collects prometheus metrics.
+// Wrap encapsulates a http.Handler which collects prometheus metrics.
 func Wrap(h http.Handler, name string, m *Metrics) http.Handler {
 	chain := h
+
+	chain = promhttp.InstrumentHandlerCounter(
+		m.ReqCounter.MustCurryWith(prometheus.Labels{"handler": name}),
+		chain)
+
+	chain = promhttp.InstrumentHandlerInFlight(
+		m.ReqInflight,
+		chain)
 
 	if m.RespSize != nil {
 
 		chain = promhttp.InstrumentHandlerResponseSize(
 			m.RespSize.MustCurryWith(prometheus.Labels{"handler": name}),
-			h)
+			chain)
 	}
 
 	if m.ReqSize != nil {
@@ -213,16 +242,12 @@ func Wrap(h http.Handler, name string, m *Metrics) http.Handler {
 			chain)
 	}
 
-	chain = promhttp.InstrumentHandlerCounter(
-		m.ReqCounter.MustCurryWith(prometheus.Labels{"handler": name}),
-		chain)
-
-	if m.ReqDurationHBuckets != nil {
+	if len(m.ReqDurationHistConf) > 0 {
 		chain = promhttp.InstrumentHandlerDuration(
 			m.ReqDurationHisto.MustCurryWith(prometheus.Labels{"handler": name}),
 			chain)
 	}
-	if m.ReqDurationPBuckets != nil {
+	if len(m.RespSizeBuckets)  > 0 {
 		chain = promhttp.InstrumentHandlerDuration(
 			m.ReqDurationPercentiles.MustCurryWith(prometheus.Labels{"handler": name}),
 			chain)
