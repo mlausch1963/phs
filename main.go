@@ -2,23 +2,26 @@ package main
 
 import (
 	"flag"
+	"context"
 	"fmt"
 	"log"
 	"math/rand"
 	"net"
 	"net/http"
 	"time"
-	"strings"
+	"io/ioutil"
 
 	"git.bofh.at/mla/phs/pkg/phsserver"
 	"github.com/prometheus/client_golang/prometheus"
 	"git.bofh.at/mla/phs/version"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"net/url"
+	"bytes"
 )
 
 type Service struct {
 	Name    string
-	Metrics phsserver.Metrics
+	ServerMetrics phsserver.ServerMetrics
 }
 
 type MonitoredClient struct {
@@ -48,19 +51,101 @@ func NewMonitoredClient(c http.Client,
 	return mc
 }
 
-var clientCounter *prometheus.CounterVec
-var clientHisto *prometheus.HistogramVec
-
 
 func bp(c *MonitoredClient, req *http.Request) (*http.Response, error ) {
 	return 	c.Do(req)
 
 }
 
+
+type actionIdType int
+const (
+	actionIdKey actionIdType = iota
+)
+
+type Client struct {
+	// HTTP client used to communicate with the DO API.
+	client *http.Client
+	BaseURL *url.URL
+
+	// Prometheus Metrics
+	ReqCounter *prometheus.CounterVec
+	ReqDurationHisto *prometheus.HistogramVec
+
+	// Add whatever is needed here
+	ExternalService *ExternalServiceOp
+}
+
+func (c *Client) NewRequest(
+	ctx context.Context,
+	method, urlStr string,
+	body interface{}) (*http.Request, error) {
+
+	rel, err := url.Parse(urlStr)
+	if err != nil {
+		return nil, err
+	}
+
+	u := c.BaseURL.ResolveReference(rel)
+	buf := new(bytes.Buffer)
+	s := u.String()
+
+	req, err := http.NewRequest(method, s, buf)
+	return req, nil
+}
+
+// Wrap encapsulates a http.Handler which collects prometheus metrics.
+//func WrapReq(h http.Handler, name string, m *ClientMetrics) http.Handler {
+//
+
+func (c *Client) Do(ctx context.Context, enndpointId string,
+	req *http.Request, v interface{}) (*http.Response, error) {
+	req = req.WithContext(ctx)
+	resp, err := c.client.Do(req)
+	return resp, err
+}
+
+type ExternalService  interface {
+	Get(context.Context) (*http.Response, error)
+}
+
+
+type ExternalServiceOp struct {
+	client *Client
+}
+
+
+var _ ExternalService = &ExternalServiceOp{}
+
+
+func (s ExternalServiceOp) Get(ctx context.Context) (*http.Response, error) {
+	req, err := s.client.NewRequest(ctx,  http.MethodGet, "http://localhost:8080/cheap", nil)
+	resp, err := s.client.Do(ctx, "cheap:get", req, nil)
+	return resp, err
+}
+
+
+func NewSvcClient(httpClient *http.Client) *Client {
+
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	c := &Client{
+		client: httpClient,
+	}
+	url, err := url.Parse("http://localhost:8080/")
+	if err != nil {
+		panic("Invalid base url for client")
+	}
+	c.BaseURL = url
+	c.ExternalService = &ExternalServiceOp{client: c}
+	return c
+}
+
 func expensive(w http.ResponseWriter, r *http.Request) {
 
 	fail := rand.Intn(100)%10 == 0
-	d := 5 + rand.Float64()*5 - 5
+	d := rand.Float64()*5
 	status := http.StatusOK
 
 	if fail {
@@ -68,31 +153,32 @@ func expensive(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusInternalServerError
 	}
 	log.Printf("fail = %v, Sleeping for %f seconds", fail, d)
+
+	ctx := context.WithValue(context.Background(),
+		actionIdKey, "expensive")
+
+	c := NewSvcClient(nil)
+
+	rsp, err := c.ExternalService.Get(ctx)
+
+	if err != nil {
+		log.Printf("Request to 'ExternalService.Get' failed. err = %+v\n", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	body, err := ioutil.ReadAll(rsp.Body)
+	bodyString := string(body)
+	log.Printf("Client returns: %s\n", bodyString)
+
 	time.Sleep(time.Duration(d) * time.Second)
-	w.WriteHeader(status)
+
 	fmt.Fprintf(w, "%f Seconds", d)
 	log.Printf("expensive: url=\"%s\"\n  remote=\"%s\" duration = %f, status=%d\n",
 		r.URL, r.RemoteAddr, d, status)
 
-	c1 := http.Client {
-		Timeout: time.Second * 1,
-	}
 
-	c := NewMonitoredClient(c1,
-		clientCounter,
-		clientHisto,
-		"cheap")
+	//w.WriteHeader(status)
 
-	req, err := http.NewRequest(http.MethodGet, "http://localhost:8080/cheap",
-		strings.NewReader(""))
-	if err != nil {
-		panic("Cannot construct req for metered client")
-	}
-	rsp, err := bp(c, req)
-	if err != nil {
-		panic(fmt.Sprintf("Executing req %+v, return error %+v", req, err))
-	}
-	log.Printf("Client request: rsp = %+v\n", rsp)
 }
 
 func cheap(w http.ResponseWriter, r *http.Request) {
@@ -154,43 +240,23 @@ func main() {
 		port = &p
 	}
 
-	clientCounter = prometheus.NewCounterVec (
-		prometheus.CounterOpts {
-			Namespace: "http",
-			Subsystem: "client",
-			Name: "requests_total",
-			Help: "http client side requests counter",
-		},
-		[]string{"code", "method", "endpoint", "action"},
-	)
-	prometheus.MustRegister(clientCounter)
-
-	clientHisto = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts {
-			Namespace: "http",
-				Subsystem: "client",
-				Name: "requests_duration",
-				Help: "Client side http duration histogram",
-				Buckets: []float64{1e-3, 2e-3, 4e-3, 8e-3,
-					16e-3, 32e-3, 64e-3,
-					128e-3, 256e-3, 1024e-3, 2048e-3},
-			},
-		[]string{"code", "method", "endpoint", "action"})
-	prometheus.MustRegister(clientHisto)
 
 	l := fmt.Sprintf(":%d", *port)
 
-	m := phsserver.NewDefaultMetrics()
-	phsserver.MetricsRegister(m)
+	serverMetric := phsserver.NewDefaultServerMetrics()
+	phsserver.ServerMetricsRegister(serverMetric)
+
+	clientMetric := phsserver.NewDefaultClientMetrics()
+	phsserver.ClientMetricsRegister(clientMetric)
 
 	expensiveHandler := http.HandlerFunc(expensive)
 	cheapHandler := http.HandlerFunc(cheap)
 
-	expensiveChain := phsserver.Wrap(expensiveHandler, "XXX:EXPENSIVE", m)
-	cheapChain := phsserver.Wrap(cheapHandler, "XXX:CHEAP", m)
+	expensiveMeteredHandler := phsserver.WrapHandler(expensiveHandler, "XXX:EXPENSIVE", serverMetric)
+	cheapMeteredHandler := phsserver.WrapHandler(cheapHandler, "XXX:CHEAP", serverMetric)
 
-	http.Handle("/expensive", expensiveChain)
-	http.Handle("/cheap", cheapChain)
+	http.Handle("/expensive", expensiveMeteredHandler)
+	http.Handle("/cheap", cheapMeteredHandler)
 
 	fmt.Println("Hello.")
 	log.Fatal(http.ListenAndServe(l, nil))

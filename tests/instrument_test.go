@@ -101,7 +101,8 @@ func TestBucketParser(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		assert.Equal(t, tst.r.r, bc.Buckets, fmt.Sprintf("%s: buckets equal", tst.name))
+		asfloat := []float64(*bc)
+		assert.Equal(t, tst.r.r, asfloat, fmt.Sprintf("%s: buckets equal", tst.name))
 	}
 }
 
@@ -112,21 +113,21 @@ type percentileResult struct {
 
 
 func percentilesEqual(
-	exp map[float64]float64,
-	real map[float64]float64,
+	exp *map[float64]float64,
+	real *map[float64]float64,
 	e float64) (bool, string) {
 
-	ke := make([]float64, len(exp))
-	kr := make([]float64, len(real))
+	ke := make([]float64, len(*exp))
+	kr := make([]float64, len(*real))
 
 	i := 0
-	for k := range exp {
+	for k := range *exp {
 		ke[i] = k
 		i++
 	}
 
 	i = 0
-	for k := range real {
+	for k := range *real {
 		kr[i] = k
 		i++
 	}
@@ -211,7 +212,8 @@ func TestPercentileParser(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		success,msg := percentilesEqual(tst.r.r, bc.Percentiles, 0.0001)
+		asmap := map[float64]float64(*bc)
+		success,msg := percentilesEqual(&tst.r.r, &asmap, 0.0001)
 		if !success {
 			assert.FailNow(t, fmt.Sprintf("%s: %s", tst.name, msg))
 
@@ -243,13 +245,13 @@ func TestMetrics(t *testing.T) {
 	rqDurPercentiles, err := phsserver.NewPercentileConfig("50;90;99")
 
 	assert.Equal(t, err, nil)
-	m := &phsserver.Metrics{
-		ReqDurationHBuckets: rqDurHisto,
-		ReqDurationPBuckets: rqDurPercentiles,
+	m := &phsserver.ServerMetrics{
+		ReqDurationHistConf: *rqDurHisto,
+		ReqDurationPercentileConf: *rqDurPercentiles,
 	}
-	phsserver.MetricsRegister(m)
+	phsserver.ServerMetricsRegister(m)
 
-	handler := phsserver.Wrap(http.HandlerFunc(_p1Handler), "p1", m)
+	handler := phsserver.WrapHandler(http.HandlerFunc(_p1Handler), "p1", m)
 
 	l := prometheus.Labels{
 		"handler": "p1",

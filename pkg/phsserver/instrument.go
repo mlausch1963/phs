@@ -96,7 +96,7 @@ func NewPercentileConfig(config string) (*PercentileConfig, error) {
 }
 
 // Metics holds the prometheus metrics for server side metrics.
-type Metrics struct {
+type ServerMetrics struct {
 	ReqInflight        prometheus.Gauge
 	ReqCounter         *prometheus.CounterVec
 
@@ -113,8 +113,18 @@ type Metrics struct {
 	RespSizeBuckets    BucketConfig
 }
 
-func NewDefaultMetrics() *Metrics {
-	m := &Metrics{
+type ClientMetrics struct {
+	ReqCounter *prometheus.CounterVec
+
+	ReqDurationHisto       *prometheus.HistogramVec
+	ReqDurationHistConf BucketConfig
+
+	ReqDurationPercentiles *prometheus.SummaryVec
+	ReqDurationPercentileConf PercentileConfig
+}
+
+func NewDefaultServerMetrics() *ServerMetrics {
+	m := &ServerMetrics{
 		ReqDurationHistConf: []float64{1e-3, 2e-3, 4e-3, 8e-3, 16e-3,
 			32e-3, 64e-3, 128e-3, 256e-3, 512e-3, 1024e-3},
 		ReqDurationPercentileConf: map[float64]float64{0.5: 0.05, 0.9:0.01, 0.99:0.001},
@@ -124,6 +134,15 @@ func NewDefaultMetrics() *Metrics {
 	return m
 }
 
+
+func NewDefaultClientMetrics() *ClientMetrics {
+	m := &ClientMetrics {
+		ReqDurationHistConf: []float64{1e-3, 2e-3, 4e-3, 8e-3, 16e-3,
+			32e-3, 64e-3, 128e-3, 256e-3, 512e-3},
+			ReqDurationPercentileConf:  map[float64]float64{0.5: 0.05, 0.9:0.01, 0.99:0.001},
+	}
+	return m
+}
 
 func NewSlowBuckets() BucketConfig {
 	return []float64{1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5}
@@ -135,11 +154,46 @@ func NewLargeSizes() BucketConfig {
 		5 * 1024 * 1024, 10 * 1024 * 1024}
 }
 
+func ClientMetricsRegister(m *ClientMetrics) {
 
-// MetricsRegister registers all the metrics with Prometheus. It takes care  not
+	m.ReqCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "http",
+			Subsystem: "client",
+			Name: "requests_total",
+			Help: "http server side requests counter",
+		},
+		[]string{"code", "method", "endpoint", "action"},
+	)
+	if len(m.ReqDurationHistConf) > 0 {
+	m.ReqDurationHisto = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts {
+			Namespace: "http",
+			Subsystem: "client",
+			Name: "requests_duration",
+			Help: "Client side http duration histogram",
+			Buckets: m.ReqDurationHistConf,
+			},
+		[]string{"code", "method", "endpoint", "action"})
+	}
+
+	if len(m.ReqDurationPercentileConf) > 0 {
+		m.ReqDurationPercentiles = prometheus.NewSummaryVec(
+			prometheus.SummaryOpts {
+				Namespace: "http",
+				Subsystem: "client",
+				Name: "request_duration_percentile",
+				Objectives: m.ReqDurationPercentileConf,
+			},
+			[]string{"code", "method", "endpoint", "action"})
+	}
+}
+
+
+// SerrverMetricsRegister registers all the metrics with Prometheus. It takes care  not
 // to register the buckets, if they have not been configured. The counters are
 // registered anyways.
-func MetricsRegister(m *Metrics) {
+func ServerMetricsRegister(m *ServerMetrics) {
 	m.ReqInflight = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "http",
@@ -218,7 +272,7 @@ func MetricsRegister(m *Metrics) {
 }
 
 // Wrap encapsulates a http.Handler which collects prometheus metrics.
-func Wrap(h http.Handler, name string, m *Metrics) http.Handler {
+func WrapHandler(h http.Handler, name string, m *ServerMetrics) http.Handler {
 	chain := h
 
 	chain = promhttp.InstrumentHandlerCounter(
