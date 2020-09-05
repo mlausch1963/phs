@@ -119,7 +119,7 @@ var _ ExternalService = &ExternalServiceOp{}
 
 
 func (s ExternalServiceOp) Get(ctx context.Context) (*http.Response, error) {
-	req, err := s.client.NewRequest(ctx,  http.MethodGet, "http://localhost:8080/cheap", nil)
+	req, err := s.client.NewRequest(ctx,  http.MethodGet, "http://localhost:5080/cheap", nil)
 	resp, err := s.client.Do(ctx, "cheap:get", req, nil)
 	return resp, err
 }
@@ -216,7 +216,7 @@ func runPrometheusEndpoint(mux *http.ServeMux,  listenAddress string) {
 }
 
 func main() {
-	port := flag.Int("port", 8080, "Port to listen on")
+	port := flag.Int("port", 5080, "Port to listen on")
 	versionFlag := flag.Bool("version", false, "Version")
 	flag.Parse()
 
@@ -232,11 +232,11 @@ func main() {
 	promMux.Handle("/metrics", promhttp.Handler())
 	promMux.HandleFunc("/", notFoundHandler)
 	go func() {
-		runPrometheusEndpoint(promMux, ":9201")
+		runPrometheusEndpoint(promMux, ":5201")
 	}()
 
-	if port != nil {
-		p := 8080
+	if port == nil {
+		p := 5080
 		port = &p
 	}
 
