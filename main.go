@@ -133,7 +133,7 @@ func NewSvcClient(httpClient *http.Client) *Client {
 	c := &Client{
 		client: httpClient,
 	}
-	url, err := url.Parse("http://localhost:8080/")
+	url, err := url.Parse("http://localhost:5080/")
 	if err != nil {
 		panic("Invalid base url for client")
 	}
@@ -204,7 +204,7 @@ func notFoundHandler(w http.ResponseWriter, r *http.Request) {
 func runPrometheusEndpoint(mux *http.ServeMux,  listenAddress string) {
 	l, err := net.Listen("tcp", listenAddress)
 	if err != nil {
-		log.Printf("Cannot listen on port 9201. err = %v", err)
+		log.Printf("Cannot listen on %s. err = %v", listenAddress, err)
 		panic("Listen error")
 	}
 	defer l.Close()
