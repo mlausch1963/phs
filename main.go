@@ -17,6 +17,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"net/url"
 	"bytes"
+
+	"github.com/gorilla/mux"
+
+	"github.com/openzipkin/zipkin-go"
+	"github.com/openzipkin/zipkin-go/model"
+	reporterhttp "github.com/openzipkin/zipkin-go/reporter/http"
+	zipkinhttp "github.com/openzipkin/zipkin-go/middleware/http"
 )
 
 type Service struct {
@@ -28,7 +35,33 @@ type MonitoredClient struct {
 	http.Client
 }
 
+const endpointURL = "http://10.20.30.123:9411/api/v2/spans"
 
+func newTracer()(*zipkin.Tracer, error) {
+
+	reporter := reporterhttp.NewReporter(endpointURL)
+	localEndPoint := &model.Endpoint{
+		ServiceName: "webapp",
+		Port: 5080,
+	}
+
+	sampler, err := zipkin.NewCountingSampler(1)
+	if err != nil {
+		return nil, err
+	}
+	t, err := zipkin.NewTracer(
+		reporter,
+		zipkin.WithSampler(sampler),
+		zipkin.WithLocalEndpoint(localEndPoint),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return t, err
+}
+
+/*
 func NewMonitoredClient(c http.Client,
 	counter *prometheus.CounterVec,
 	histo *prometheus.HistogramVec,
@@ -56,7 +89,7 @@ func bp(c *MonitoredClient, req *http.Request) (*http.Response, error ) {
 	return 	c.Do(req)
 
 }
-
+*/
 
 type actionIdType int
 const (
@@ -133,7 +166,7 @@ func NewSvcClient(httpClient *http.Client) *Client {
 	c := &Client{
 		client: httpClient,
 	}
-	url, err := url.Parse("http://localhost:5080/")
+	url, err := url.Parse("http://10.20.30.123t:7011/")
 	if err != nil {
 		panic("Invalid base url for client")
 	}
@@ -141,6 +174,9 @@ func NewSvcClient(httpClient *http.Client) *Client {
 	c.ExternalService = &ExternalServiceOp{client: c}
 	return c
 }
+
+
+
 
 func expensive(w http.ResponseWriter, r *http.Request) {
 
@@ -201,7 +237,9 @@ func notFoundHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
 
-func runPrometheusEndpoint(mux *http.ServeMux,  listenAddress string) {
+
+
+func runPrometheusEndpoint(mux *mux.Router,  listenAddress string) {
 	l, err := net.Listen("tcp", listenAddress)
 	if err != nil {
 		log.Printf("Cannot listen on %s. err = %v", listenAddress, err)
@@ -216,6 +254,14 @@ func runPrometheusEndpoint(mux *http.ServeMux,  listenAddress string) {
 }
 
 func main() {
+
+
+	fmt.Println("Hi, webapp v 1.1 here with client tracer")
+	fmt.Println("Hi, webapp v 1.1 here with client tracer")
+	fmt.Println("Hi, webapp v 1.1 here with client tracer")
+	fmt.Println("Hi, webapp v 1.1 here with client tracer")
+	fmt.Println("Hi, webapp v 1.1 here with client tracer")
+
 	port := flag.Int("port", 5080, "Port to listen on")
 	versionFlag := flag.Bool("version", false, "Version")
 	flag.Parse()
@@ -228,9 +274,29 @@ func main() {
 		fmt.Println("OS / Arch:", version.OsArch)
 		return
 	}
-	promMux := http.NewServeMux()
+
+
+
+	promMux := mux.NewRouter()
+	tracer, err := newTracer()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	http.DefaultClient.Transport, err = zipkinhttp.NewTransport(
+		tracer,
+		zipkinhttp.TransportTrace(true))
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+
+
+
 	promMux.Handle("/metrics", promhttp.Handler())
 	promMux.HandleFunc("/", notFoundHandler)
+
 	go func() {
 		runPrometheusEndpoint(promMux, ":5201")
 	}()
@@ -240,8 +306,6 @@ func main() {
 		port = &p
 	}
 
-
-	l := fmt.Sprintf(":%d", *port)
 
 	serverMetric := phsserver.NewDefaultServerMetrics()
 	phsserver.ServerMetricsRegister(serverMetric)
@@ -255,9 +319,20 @@ func main() {
 	expensiveMeteredHandler := phsserver.WrapHandler(expensiveHandler, "XXX:EXPENSIVE", serverMetric)
 	cheapMeteredHandler := phsserver.WrapHandler(cheapHandler, "XXX:CHEAP", serverMetric)
 
-	http.Handle("/expensive", expensiveMeteredHandler)
-	http.Handle("/cheap", cheapMeteredHandler)
+	promMux.Handle("/expensive", expensiveMeteredHandler)
+	promMux.Handle("/cheap", cheapMeteredHandler)
 
+
+	promMux.Use(zipkinhttp.NewServerMiddleware(
+		tracer,
+		zipkinhttp.SpanName("webapp_request"),
+	))
+
+	srv := &http.Server{
+		Handler: promMux,
+		Addr: fmt.Sprintf(":%d", *port),
+	}
 	fmt.Println("Hello.")
-	log.Fatal(http.ListenAndServe(l, nil))
+
+	log.Fatal(srv.ListenAndServe())
 }

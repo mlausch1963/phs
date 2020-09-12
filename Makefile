@@ -26,6 +26,9 @@ build:
 	@echo "GOPATH=${GOPATH}"
 	go build -ldflags "-X github.com/lacion/phs/version.GitCommit=${GIT_COMMIT}${GIT_DIRTY} -X github.com/lacion/phs/version.BuildDate=${BUILD_DATE}" -o bin/${BIN_NAME}
 
+image: build
+	bash ./mkcontainer.sh
+
 get-deps:
 	dep ensure
 
